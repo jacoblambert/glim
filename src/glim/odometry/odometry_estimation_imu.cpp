@@ -421,9 +421,22 @@ void OdometryEstimationIMU::update_smoother(
   auto arena = static_cast<tbb::task_arena*>(tbb_task_arena.get());
   arena->execute([&] {
 #endif
-    smoother->update(new_factors, new_values, new_stamp);
-    for (int i = 0; i < update_count; i++) {
-      smoother->update();
+    // CRASH-PROOFING (2026-06-15): GTSAM throws gtsam::IndeterminantLinearSystemException when the
+    // fixed-lag smoother's linear system goes underconstrained -- observed DEEP in long runs (on a
+    // velocity var, after a burst of scan-gate rejections). Unhandled it propagates out and SIGABRTs
+    // the whole glim_rosnode -> "SLAM dies" with no recovery. Catch it here (the central update path),
+    // flag smoother corruption + run the fallback, and SKIP this update so the node survives; IMU+RTK
+    // carry the frame and a subsequent well-constrained update recovers the estimate. A SLAM front-end
+    // must never hard-abort on a single bad solve.
+    try {
+      smoother->update(new_factors, new_values, new_stamp);
+      for (int i = 0; i < update_count; i++) {
+        smoother->update();
+      }
+    } catch (const std::exception& e) {
+      logger->error("smoother->update threw ({}); skipping this update to avoid node abort (crash-proofed)", e.what());
+      Callbacks::on_smoother_corruption(0.0);
+      fallback_smoother();
     }
 #ifdef GTSAM_USE_TBB
   });

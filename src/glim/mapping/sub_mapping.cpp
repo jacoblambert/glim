@@ -325,8 +325,10 @@ void SubMapping::insert_frame(const EstimationFrame::ConstPtr& odom_frame_) {
 
   if (new_submap) {
     new_submap->id = submap_count++;
-    submap_queue.push_back(new_submap);
     Callbacks::on_new_submap(new_submap);
+    // Consumers must snapshot the local origin before the global mapping thread
+    // receives this shared object and starts changing T_world_origin.
+    submap_queue.push_back(new_submap);
 
     odom_frames.clear();
     keyframes.clear();
@@ -513,6 +515,7 @@ std::vector<SubMap::Ptr> SubMapping::submit_end_of_sequence() {
 
     if (new_submap) {
       new_submap->id = submap_count++;
+      Callbacks::on_new_submap(new_submap);
       submaps.push_back(new_submap);
     }
   }
